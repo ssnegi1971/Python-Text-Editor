@@ -68,15 +68,19 @@ class TextEditorApp:
         button_row.columnconfigure(0, weight=1)
         button_row.columnconfigure(1, weight=1)
         button_row.columnconfigure(2, weight=1)
+        button_row.columnconfigure(3, weight=1)
         
+        self.new_btn = ttk.Button(button_row, text="📄 New File", command=self.new_file)
+        self.new_btn.grid(row=0, column=0, padx=(0, 2), sticky="ew")
+
         self.save_btn = ttk.Button(button_row, text="💾 Save File", command=self.save_file)
-        self.save_btn.grid(row=0, column=0, padx=(0, 2), sticky="ew")
+        self.save_btn.grid(row=0, column=1, padx=2, sticky="ew")
         
         self.find_btn = ttk.Button(button_row, text="🔍 Find & Replace", command=self.open_find_dialog)
-        self.find_btn.grid(row=0, column=1, padx=2, sticky="ew")
+        self.find_btn.grid(row=0, column=2, padx=2, sticky="ew")
         
         self.close_file_btn = ttk.Button(button_row, text="🔒 Close File", command=self.close_file)
-        self.close_file_btn.grid(row=0, column=2, padx=(2, 0), sticky="ew")
+        self.close_file_btn.grid(row=0, column=3, padx=(2, 0), sticky="ew")
         
         # Pack layouts into the split window panes
         paned_window.add(left_frame, weight=1)
@@ -126,6 +130,14 @@ class TextEditorApp:
         except Exception as e:
             messagebox.showerror("Error", f"Could not read file:\n{str(e)}")
             
+    def new_file(self):
+        """Clears the workspace and unlinks any existing active tracking paths."""
+        self.current_file_path = ""
+        self.text_edit.tag_remove("match", "1.0", tk.END)
+        self.text_edit.delete("1.0", tk.END)
+        self.file_list.selection_clear(0, tk.END)
+        self.text_edit.focus_set()
+
     def save_file(self):
         # Fallback mechanism: trigger 'Save As' if no file was loaded first
         if not self.current_file_path:
@@ -194,7 +206,6 @@ class TextEditorApp:
                 start_pos = end_pos
                 count += 1
             return count
-
         def replace_one():
             search_query = entry_find.get()
             replace_query = entry_replace.get()
@@ -220,7 +231,6 @@ class TextEditorApp:
                 highlight_matches()
             else:
                 messagebox.showinfo("Replace", "No occurrences found.", parent=find_dialog)
-
         def replace_all():
             search_query = entry_find.get()
             replace_query = entry_replace.get()
@@ -249,7 +259,6 @@ class TextEditorApp:
                 messagebox.showinfo("Replace All", f"Successfully replaced {count} occurrence(s).", parent=find_dialog)
             else:
                 messagebox.showinfo("Replace All", "No occurrences found.", parent=find_dialog)
-
         # Button row container within the popup layout framework
         btn_frame = ttk.Frame(find_dialog)
         btn_frame.grid(row=2, column=0, columnspan=2, pady=15, sticky="ew")
@@ -266,7 +275,6 @@ class TextEditorApp:
         
         # Trigger highlights on interactive keystroke typing updates
         entry_find.bind("<KeyRelease>", lambda e: highlight_matches())
-
     def close_file(self):
         """Clears the active workspace text frame and drops tracking path details."""
         self.current_file_path = ""
