@@ -72,7 +72,7 @@ class TextEditorApp:
         self.save_btn = ttk.Button(button_row, text="💾 Save File", command=self.save_file)
         self.save_btn.grid(row=0, column=0, padx=(0, 2), sticky="ew")
         
-        self.find_btn = ttk.Button(button_row, text="🔍 Find Text", command=self.open_find_dialog)
+        self.find_btn = ttk.Button(button_row, text="🔍 Find & Replace", command=self.open_find_dialog)
         self.find_btn.grid(row=0, column=1, padx=2, sticky="ew")
         
         self.close_file_btn = ttk.Button(button_row, text="🔒 Close File", command=self.close_file)
@@ -152,58 +152,120 @@ class TextEditorApp:
             messagebox.showerror("Error", f"Could not save file:\n{str(e)}")
             
     def open_find_dialog(self):
-        """Opens a custom popup window to search text inside the editor window."""
+        """Opens a custom popup window to search and replace text inside the editor window."""
         find_dialog = tk.Toplevel(self.root)
-        find_dialog.title("Find")
-        find_dialog.geometry("350x100")
+        find_dialog.title("Find & Replace")
+        find_dialog.geometry("400x180")
         find_dialog.resizable(False, False)
-        
-        # Center popup window relative to main app
         find_dialog.transient(self.root)
         
-        lbl = ttk.Label(find_dialog, text="Search characters/text:")
-        lbl.pack(pady=(10, 2))
+        # Grid Configuration for clean layout alignment
+        find_dialog.columnconfigure(1, weight=1)
         
-        entry = ttk.Entry(find_dialog, width=30)
-        entry.pack(pady=2)
-        entry.focus_set()
+        # Find Field
+        lbl_find = ttk.Label(find_dialog, text="Find text:")
+        lbl_find.grid(row=0, column=0, padx=10, pady=(15, 5), sticky="w")
+        entry_find = ttk.Entry(find_dialog, width=30)
+        entry_find.grid(row=0, column=1, padx=10, pady=(15, 5), sticky="ew")
+        entry_find.focus_set()
         
-        def execute_search():
-            # Clear previous matches
+        # Replace Field
+        lbl_replace = ttk.Label(find_dialog, text="Replace with:")
+        lbl_replace.grid(row=1, column=0, padx=10, pady=5, sticky="w")
+        entry_replace = ttk.Entry(find_dialog, width=30)
+        entry_replace.grid(row=1, column=1, padx=10, pady=5, sticky="ew")
+        
+        def highlight_matches():
             self.text_edit.tag_remove("match", "1.0", tk.END)
-            search_query = entry.get()
-            
+            search_query = entry_find.get()
             if not search_query:
-                return
-            
+                return 0
+                
             start_pos = "1.0"
-            matches_found = 0
-            
+            count = 0
             while True:
-                # Search loop targeting character string match occurrences
                 start_pos = self.text_edit.search(search_query, start_pos, stopindex=tk.END)
                 if not start_pos:
                     break
-                
-                # Compute end position dynamically matching length of search string
                 end_pos = f"{start_pos}+{len(search_query)}c"
                 self.text_edit.tag_add("match", start_pos, end_pos)
-                
-                # Scroll window layout view onto the first discovered item match
-                if matches_found == 0:
+                if count == 0:
                     self.text_edit.see(start_pos)
-                    
                 start_pos = end_pos
-                matches_found += 1
+                count += 1
+            return count
+
+        def replace_one():
+            search_query = entry_find.get()
+            replace_query = entry_replace.get()
+            if not search_query:
+                return
                 
-            if matches_found == 0:
-                messagebox.showinfo("Find Result", "No matches found.", parent=find_dialog)
+            # Search from the current insert cursor spot, or fallback to the beginning
+            start_pos = self.text_edit.index(tk.INSERT)
+            pos = self.text_edit.search(search_query, start_pos, stopindex=tk.END)
+            
+            # Loop back to top if not found from cursor position downwards
+            if not pos:
+                pos = self.text_edit.search(search_query, "1.0", stopindex=tk.END)
                 
-        btn_find = ttk.Button(find_dialog, text="Find All", command=execute_search)
-        btn_find.pack(pady=(5, 5))
+            if pos:
+                end_pos = f"{pos}+{len(search_query)}c"
+                self.text_edit.delete(pos, end_pos)
+                self.text_edit.insert(pos, replace_query)
+                # Move cursor right after the newly inserted term
+                new_end_pos = f"{pos}+{len(replace_query)}c"
+                self.text_edit.mark_set(tk.INSERT, new_end_pos)
+                self.text_edit.see(new_end_pos)
+                highlight_matches()
+            else:
+                messagebox.showinfo("Replace", "No occurrences found.", parent=find_dialog)
+
+        def replace_all():
+            search_query = entry_find.get()
+            replace_query = entry_replace.get()
+            if not search_query:
+                return
+                
+            start_pos = "1.0"
+            count = 0
+            # Disable undo stacking temporarily to group everything into a single action sequence
+            self.text_edit.config(autoseparators=False)
+            
+            while True:
+                pos = self.text_edit.search(search_query, start_pos, stopindex=tk.END)
+                if not pos:
+                    break
+                end_pos = f"{pos}+{len(search_query)}c"
+                self.text_edit.delete(pos, end_pos)
+                self.text_edit.insert(pos, replace_query)
+                start_pos = f"{pos}+{len(replace_query)}c"
+                count += 1
+                
+            self.text_edit.config(autoseparators=True)
+            self.text_edit.tag_remove("match", "1.0", tk.END)
+            
+            if count > 0:
+                messagebox.showinfo("Replace All", f"Successfully replaced {count} occurrence(s).", parent=find_dialog)
+            else:
+                messagebox.showinfo("Replace All", "No occurrences found.", parent=find_dialog)
+
+        # Button row container within the popup layout framework
+        btn_frame = ttk.Frame(find_dialog)
+        btn_frame.grid(row=2, column=0, columnspan=2, pady=15, sticky="ew")
+        btn_frame.columnconfigure((0, 1, 2), weight=1)
         
-        # Bind enter key inside popup input frame to fire search directly
-        entry.bind("<Return>", lambda event: execute_search())
+        btn_find = ttk.Button(btn_frame, text="Find/Highlight", command=highlight_matches)
+        btn_find.grid(row=0, column=0, padx=5)
+        
+        btn_rep_one = ttk.Button(btn_frame, text="Replace One", command=replace_one)
+        btn_rep_one.grid(row=0, column=1, padx=5)
+        
+        btn_rep_all = ttk.Button(btn_frame, text="Replace All", command=replace_all)
+        btn_rep_all.grid(row=0, column=2, padx=5)
+        
+        # Trigger highlights on interactive keystroke typing updates
+        entry_find.bind("<KeyRelease>", lambda e: highlight_matches())
 
     def close_file(self):
         """Clears the active workspace text frame and drops tracking path details."""
