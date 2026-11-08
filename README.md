@@ -6,4 +6,4 @@ These files are displayed in left pane.
 
 A file selected in open for reading and editing in right pane.
 
-These are options to Save File, close File and Close All Files.
+These are options to Find Text, Save File, close File and Close All Files.
