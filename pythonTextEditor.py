@@ -10,71 +10,61 @@ class TextEditorApp:
         
         self.current_directory = ""
         self.current_file_path = ""
-        self.untitled_count = 0  # Dynamic tracker for virtual placeholder files
+        self.untitled_count = 0  
+        
+        # Track unsaved/active changes in a temporary dictionary cache
+        self.workspace_cache = {}
+        self.last_selected_item = None
         
         self.init_ui()
         
     def init_ui(self):
-        # Configure layout weights for responsive window resizing
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         
-        # Use a PanedWindow to allow users to drag and resize the side columns
         paned_window = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         paned_window.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
-        # --- Left Pane (Directory Browsing & File List) ---
+        # --- Left Pane ---
         left_frame = ttk.Frame(paned_window, padding=5)
         
         self.browse_btn = ttk.Button(left_frame, text="📂 Browse Directory", command=self.browse_directory)
         self.browse_btn.pack(fill=tk.X, pady=(0, 5))
         
-        # Listbox for filenames paired with a vertical scrollbar
         list_container = ttk.Frame(left_frame)
         list_container.pack(fill=tk.BOTH, expand=True)
         
         self.file_list = tk.Listbox(list_container, selectmode=tk.SINGLE, exportselection=False)
         self.file_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Binding Strategy:
-        # Standard selection handles file loading natively
+        # Intercepting click selection transitions
         self.file_list.bind('<<ListboxSelect>>', self.load_file)
-        # Intercepting mouse clicks ONLY to check for the close cross event
         self.file_list.bind('<Button-1>', self.check_remove_click)
         
         list_scrollbar = ttk.Scrollbar(list_container, orient=tk.VERTICAL, command=self.file_list.yview)
         list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.file_list.config(yscrollcommand=list_scrollbar.set)
         
-        # Button to reset directory path tracking completely
         self.close_all_btn = ttk.Button(left_frame, text="❌ Close All Files", command=self.close_all_files)
         self.close_all_btn.pack(fill=tk.X, pady=(5, 0))
         
-        # --- Right Pane (Text Editor Area) ---
+        # --- Right Pane ---
         right_frame = ttk.Frame(paned_window, padding=5)
         
-        # Text editing widget paired with a vertical scrollbar
         text_container = ttk.Frame(right_frame)
         text_container.pack(fill=tk.BOTH, expand=True)
         
         self.text_edit = tk.Text(text_container, wrap=tk.WORD, undo=True)
         self.text_edit.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        # Configure a highlight tag for found text
         self.text_edit.tag_configure("match", background="yellow", foreground="black")
         
         text_scrollbar = ttk.Scrollbar(text_container, orient=tk.VERTICAL, command=self.text_edit.yview)
         text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.file_list.config(yscrollcommand=list_scrollbar.set)
         self.text_edit.config(yscrollcommand=text_scrollbar.set)
         
-        # Control row container for workflow action shortcuts
         button_row = ttk.Frame(right_frame)
         button_row.pack(fill=tk.X, pady=(5, 0))
-        button_row.columnconfigure(0, weight=1)
-        button_row.columnconfigure(1, weight=1)
-        button_row.columnconfigure(2, weight=1)
-        button_row.columnconfigure(3, weight=1)
+        button_row.columnconfigure((0, 1, 2, 3), weight=1)
         
         self.new_btn = ttk.Button(button_row, text="📄 New File", command=self.new_file)
         self.new_btn.grid(row=0, column=0, padx=(0, 2), sticky="ew")
@@ -88,7 +78,6 @@ class TextEditorApp:
         self.close_file_btn = ttk.Button(button_row, text="🔒 Close File", command=self.close_file)
         self.close_file_btn.grid(row=0, column=3, padx=(2, 0), sticky="ew")
         
-        # Pack layouts into the split window panes
         paned_window.add(left_frame, weight=1)
         paned_window.add(right_frame, weight=3)
         
@@ -96,11 +85,17 @@ class TextEditorApp:
         directory = filedialog.askdirectory(title="Select Folder")
         if directory:
             self.current_directory = directory
+            self.workspace_cache.clear()
+            self.last_selected_item = None
             self.refresh_file_list()
             
     def refresh_file_list(self):
+        # Keep track of active workspace entries that are unsaved placeholder files
+        temp_untitleds = [item for item in self.file_list.get(0, tk.END) if item.startswith("Untitled-")]
+        
         self.file_list.delete(0, tk.END)
         try:
+            # Re-populate local text files
             if self.current_directory:
                 all_items = os.listdir(self.current_directory)
                 files_only = [
@@ -110,9 +105,19 @@ class TextEditorApp:
                 ]
                 for file in sorted(files_only):
                     self.file_list.insert(tk.END, f"{file}  ❌")
+            
+            # Put back any remaining unsaved items
+            for unt in temp_untitleds:
+                self.file_list.insert(tk.END, unt)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load directory files:\n{str(e)}")
             
+    def save_current_to_cache(self):
+        """Saves what is currently typed in the text box into the temporary cache registry."""
+        if self.last_selected_item:
+            current_content = self.text_edit.get("1.0", tk.END)
+            self.workspace_cache[self.last_selected_item] = current_content
+
     def load_file(self, event=None):
         selection = self.file_list.curselection()
         if not selection:
@@ -120,13 +125,29 @@ class TextEditorApp:
             
         display_name = self.file_list.get(selection)
         
-        if display_name.startswith("Untitled-") and not self.current_directory:
+        # Save working states before loading the new window frame contents
+        self.save_current_to_cache()
+        self.last_selected_item = display_name
+        self.text_edit.tag_remove("match", "1.0", tk.END)
+        
+        # Case A: Restoring state from the virtual file cache
+        if display_name.startswith("Untitled-"):
+            self.current_file_path = ""
+            self.text_edit.delete("1.0", tk.END)
+            if display_name in self.workspace_cache:
+                self.text_edit.insert("1.0", self.workspace_cache[display_name])
             return
             
-        # Using .removesuffix instead of fragile manual slicing to ensure .txt extensions are preserved perfectly
+        # Case B: Opening standard document files from localized disk directory
         filename = display_name.removesuffix("  ❌")
         self.current_file_path = os.path.join(self.current_directory, filename)
         
+        # If text workspace edits are already cached for this disk file, prioritize them
+        if display_name in self.workspace_cache:
+            self.text_edit.delete("1.0", tk.END)
+            self.text_edit.insert("1.0", self.workspace_cache[display_name])
+            return
+            
         try:
             if os.path.exists(self.current_file_path):
                 with open(self.current_file_path, 'r', encoding='utf-8') as f:
@@ -140,7 +161,6 @@ class TextEditorApp:
             messagebox.showerror("Error", f"Could not read file:\n{str(e)}")
             
     def check_remove_click(self, event):
-        """Intercepts click events ONLY to manage removal if the red cross was targeted."""
         index = self.file_list.nearest(event.y)
         if index < 0:
             return
@@ -151,26 +171,28 @@ class TextEditorApp:
             
         x_start, y_start, width, height = bbox
         
-        # Check if click is on the rightmost 30 pixels where the '❌' resides
         if event.x > (x_start + width - 30):
             display_name = self.file_list.get(index)
             filename = display_name.removesuffix("  ❌")
             
-            if display_name.startswith("Untitled-"):
-                if not self.current_file_path:
-                    self.close_file()
-            else:
+            if display_name in self.workspace_cache:
+                del self.workspace_cache[display_name]
+                
+            if self.last_selected_item == display_name:
+                self.last_selected_item = None
+                self.close_file()
+            
+            if not display_name.startswith("Untitled-"):
                 target_path = os.path.join(self.current_directory, filename)
                 if self.current_file_path == target_path:
                     self.close_file()
                     
             self.file_list.delete(index)
-            # Break event chain ONLY when cross is clicked to prevent selection triggering
             return "break"
             
-        # Normal row text clicks do not return "break", allowing natural file loading.
-
     def new_file(self):
+        self.save_current_to_cache()
+        
         self.current_file_path = ""
         self.text_edit.tag_remove("match", "1.0", tk.END)
         self.text_edit.delete("1.0", tk.END)
@@ -178,11 +200,14 @@ class TextEditorApp:
         
         self.untitled_count += 1
         placeholder_name = f"Untitled-{self.untitled_count}  ❌"
+        
+        self.workspace_cache[placeholder_name] = ""
         self.file_list.insert(tk.END, placeholder_name)
         
         new_idx = self.file_list.size() - 1
         self.file_list.selection_set(new_idx)
         self.file_list.activate(new_idx)
+        self.last_selected_item = placeholder_name
         self.text_edit.focus_set()
         
     def save_file(self):
@@ -198,6 +223,8 @@ class TextEditorApp:
                 selection = self.file_list.curselection()
                 if selection:
                     display_name = self.file_list.get(selection)
+                    if display_name in self.workspace_cache:
+                        del self.workspace_cache[display_name]
                     if display_name.startswith("Untitled-"):
                         self.file_list.delete(selection)
                 self.current_directory = os.path.dirname(file_path)
@@ -209,13 +236,18 @@ class TextEditorApp:
                 f.write(content.rstrip('\n') + '\n')
                 
             messagebox.showinfo("Saved", "File saved successfully!")
+            
+            saved_display_name = os.path.basename(self.current_file_path) + "  ❌"
+            if saved_display_name in self.workspace_cache:
+                del self.workspace_cache[saved_display_name]
+                
             self.refresh_file_list()
             
-            saved_filename = os.path.basename(self.current_file_path) + "  ❌"
             items = self.file_list.get(0, tk.END)
-            if saved_filename in items:
-                idx = items.index(saved_filename)
+            if saved_display_name in items:
+                idx = items.index(saved_display_name)
                 self.file_list.selection_set(idx)
+                self.last_selected_item = saved_display_name
         except Exception as e:
             messagebox.showerror("Error", f"Could not save file:\n{str(e)}")
             
@@ -321,15 +353,20 @@ class TextEditorApp:
         entry_find.bind("<KeyRelease>", lambda e: highlight_matches())
         
     def close_file(self):
-        """Clears the active workspace text frame and drops tracking path details."""
+        if self.last_selected_item in self.workspace_cache:
+            del self.workspace_cache[self.last_selected_item]
+        self.last_selected_item = None
         self.current_file_path = ""
         self.text_edit.tag_remove("match", "1.0", tk.END)
         self.text_edit.delete("1.0", tk.END)
         self.file_list.selection_clear(0, tk.END)
         
     def close_all_files(self):
-        """Wipes out both the text editor tracking and clears the sidebar folder view."""
-        self.close_file()
+        self.workspace_cache.clear()
+        self.last_selected_item = None
+        self.current_file_path = ""
+        self.text_edit.tag_remove("match", "1.0", tk.END)
+        self.text_edit.delete("1.0", tk.END)
         self.current_directory = ""
         self.file_list.delete(0, tk.END)
 
