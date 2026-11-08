@@ -1,18 +1,17 @@
 import os
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 
 class TextEditorApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Python Tkinter Text Editor")
-        self.root.geometry("1000x600")
+        self.root.geometry("1100x600")
         
         self.current_directory = ""
         self.current_file_path = ""
         self.untitled_count = 0  
         
-        # Track unsaved/active changes in a temporary dictionary cache
         self.workspace_cache = {}
         self.last_selected_item = None
         
@@ -37,7 +36,6 @@ class TextEditorApp:
         self.file_list = tk.Listbox(list_container, selectmode=tk.SINGLE, exportselection=False)
         self.file_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Intercepting click selection transitions
         self.file_list.bind('<<ListboxSelect>>', self.load_file)
         self.file_list.bind('<Button-1>', self.check_remove_click)
         
@@ -51,20 +49,43 @@ class TextEditorApp:
         # --- Right Pane ---
         right_frame = ttk.Frame(paned_window, padding=5)
         
-        text_container = ttk.Frame(right_frame)
-        text_container.pack(fill=tk.BOTH, expand=True)
+        # Text editing frame containing ruler and text area side-by-side
+        text_layout_frame = ttk.Frame(right_frame)
+        text_layout_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.text_edit = tk.Text(text_container, wrap=tk.WORD, undo=True)
+        # Line count ruler (Canvas widget)
+        self.line_ruler = tk.Canvas(text_layout_frame, width=45, bg="#f0f0f0", bd=0, highlightthickness=0)
+        self.line_ruler.pack(side=tk.LEFT, fill=tk.Y)
+        
+        # Text editing widget
+        self.text_edit = tk.Text(text_layout_frame, wrap=tk.WORD, undo=True)
         self.text_edit.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.text_edit.tag_configure("match", background="yellow", foreground="black")
         
-        text_scrollbar = ttk.Scrollbar(text_container, orient=tk.VERTICAL, command=self.text_edit.yview)
+        # Scrollbar linked to text component
+        text_scrollbar = ttk.Scrollbar(text_layout_frame, orient=tk.VERTICAL, command=self.text_edit.yview)
         text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.text_edit.config(yscrollcommand=text_scrollbar.set)
         
+        # Triggers to update the line count ruler dynamically
+        self.text_edit.bind('<KeyRelease>', self.update_line_ruler)
+        self.text_edit.bind('<ButtonRelease-1>', self.update_line_ruler)
+        self.text_edit.bind('<MouseWheel>', self.update_line_ruler)
+        self.text_edit.bind('<Configure>', self.update_line_ruler)
+        # For Linux scroll events
+        self.text_edit.bind('<Button-4>', self.update_line_ruler)
+        self.text_edit.bind('<Button-5>', self.update_line_ruler)
+        
+        # Custom scroll command proxy to capture scrollbar drag movements
+        def on_scroll(*args):
+            text_scrollbar.set(*args)
+            self.update_line_ruler()
+        self.text_edit.config(yscrollcommand=on_scroll)
+        
+        # Control row container for workflow action shortcuts
         button_row = ttk.Frame(right_frame)
         button_row.pack(fill=tk.X, pady=(5, 0))
-        button_row.columnconfigure((0, 1, 2, 3), weight=1)
+        button_row.columnconfigure((0, 1, 2, 3, 4), weight=1)
         
         self.new_btn = ttk.Button(button_row, text="📄 New File", command=self.new_file)
         self.new_btn.grid(row=0, column=0, padx=(0, 2), sticky="ew")
@@ -75,12 +96,54 @@ class TextEditorApp:
         self.find_btn = ttk.Button(button_row, text="🔍 Find & Replace", command=self.open_find_dialog)
         self.find_btn.grid(row=0, column=2, padx=2, sticky="ew")
         
+        self.goto_btn = ttk.Button(button_row, text="➡️ Goto Line", command=self.goto_line)
+        self.goto_btn.grid(row=0, column=3, padx=2, sticky="ew")
+        
         self.close_file_btn = ttk.Button(button_row, text="🔒 Close File", command=self.close_file)
-        self.close_file_btn.grid(row=0, column=3, padx=(2, 0), sticky="ew")
+        self.close_file_btn.grid(row=0, column=4, padx=(2, 0), sticky="ew")
         
         paned_window.add(left_frame, weight=1)
         paned_window.add(right_frame, weight=3)
         
+        # Initialize ruler on startup
+        self.update_line_ruler()
+        
+    def update_line_ruler(self, event=None):
+        '''Redraws the numerical line indicators inside the canvas ruler panel alignment.'''
+        self.line_ruler.delete("all")
+        
+        # Iterate over text rows visually present in the viewport
+        i = self.text_edit.index("@0,0")
+        while True:
+            dline = self.text_edit.dlineinfo(i)
+            if dline is None:
+                break
+            y = dline[1]
+            line_num = i.split(".")[0]
+            # Draw line number slightly offset from the right boundary edge
+            self.line_ruler.create_text(38, y, anchor="ne", text=line_num, fill="#666666", font=("Courier", 10))
+            i = self.text_edit.index(f"{i}+1line")
+            
+    def goto_line(self):
+        '''Prompts user to navigate directly to a target line row index row line.'''
+        # Calculate maximum current rows
+        total_lines = int(self.text_edit.index('end-1c').split('.')[0])
+        
+        line_num = simpledialog.askinteger(
+            "Goto Line", 
+            f"Enter line number (1-{total_lines}):", 
+            parent=self.root,
+            minvalue=1, 
+            maxvalue=total_lines
+        )
+        
+        if line_num:
+            # Set cursor focus to target index point position
+            self.text_edit.mark_set(tk.INSERT, f"{line_num}.0")
+            self.text_edit.see(f"{line_num}.0")
+            self.text_edit.focus_set()
+            self.update_line_ruler()
+            
     def browse_directory(self):
         directory = filedialog.askdirectory(title="Select Folder")
         if directory:
@@ -90,12 +153,9 @@ class TextEditorApp:
             self.refresh_file_list()
             
     def refresh_file_list(self):
-        # Keep track of active workspace entries that are unsaved placeholder files
         temp_untitleds = [item for item in self.file_list.get(0, tk.END) if item.startswith("Untitled-")]
-        
         self.file_list.delete(0, tk.END)
         try:
-            # Re-populate local text files
             if self.current_directory:
                 all_items = os.listdir(self.current_directory)
                 files_only = [
@@ -105,15 +165,12 @@ class TextEditorApp:
                 ]
                 for file in sorted(files_only):
                     self.file_list.insert(tk.END, f"{file}  ❌")
-            
-            # Put back any remaining unsaved items
             for unt in temp_untitleds:
                 self.file_list.insert(tk.END, unt)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load directory files:\n{str(e)}")
             
     def save_current_to_cache(self):
-        """Saves what is currently typed in the text box into the temporary cache registry."""
         if self.last_selected_item:
             current_content = self.text_edit.get("1.0", tk.END)
             self.workspace_cache[self.last_selected_item] = current_content
@@ -125,27 +182,25 @@ class TextEditorApp:
             
         display_name = self.file_list.get(selection)
         
-        # Save working states before loading the new window frame contents
         self.save_current_to_cache()
         self.last_selected_item = display_name
         self.text_edit.tag_remove("match", "1.0", tk.END)
         
-        # Case A: Restoring state from the virtual file cache
         if display_name.startswith("Untitled-"):
             self.current_file_path = ""
             self.text_edit.delete("1.0", tk.END)
             if display_name in self.workspace_cache:
                 self.text_edit.insert("1.0", self.workspace_cache[display_name])
+            self.root.after(10, self.update_line_ruler)
             return
             
-        # Case B: Opening standard document files from localized disk directory
         filename = display_name.removesuffix("  ❌")
         self.current_file_path = os.path.join(self.current_directory, filename)
         
-        # If text workspace edits are already cached for this disk file, prioritize them
         if display_name in self.workspace_cache:
             self.text_edit.delete("1.0", tk.END)
             self.text_edit.insert("1.0", self.workspace_cache[display_name])
+            self.root.after(10, self.update_line_ruler)
             return
             
         try:
@@ -159,6 +214,8 @@ class TextEditorApp:
                 messagebox.showerror("Error", f"File path does not exist:\n{self.current_file_path}")
         except Exception as e:
             messagebox.showerror("Error", f"Could not read file:\n{str(e)}")
+        finally:
+            self.root.after(10, self.update_line_ruler)
             
     def check_remove_click(self, event):
         index = self.file_list.nearest(event.y)
@@ -209,6 +266,7 @@ class TextEditorApp:
         self.file_list.activate(new_idx)
         self.last_selected_item = placeholder_name
         self.text_edit.focus_set()
+        self.update_line_ruler()
         
     def save_file(self):
         if not self.current_file_path:
@@ -250,6 +308,8 @@ class TextEditorApp:
                 self.last_selected_item = saved_display_name
         except Exception as e:
             messagebox.showerror("Error", f"Could not save file:\n{str(e)}")
+        finally:
+            self.update_line_ruler()
             
     def open_find_dialog(self):
         find_dialog = tk.Toplevel(self.root)
@@ -360,6 +420,7 @@ class TextEditorApp:
         self.text_edit.tag_remove("match", "1.0", tk.END)
         self.text_edit.delete("1.0", tk.END)
         self.file_list.selection_clear(0, tk.END)
+        self.update_line_ruler()
         
     def close_all_files(self):
         self.workspace_cache.clear()
@@ -369,6 +430,7 @@ class TextEditorApp:
         self.text_edit.delete("1.0", tk.END)
         self.current_directory = ""
         self.file_list.delete(0, tk.END)
+        self.update_line_ruler()
 
 if __name__ == "__main__":
     root = tk.Tk()
