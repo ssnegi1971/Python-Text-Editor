@@ -15,6 +15,12 @@ class TextEditorApp:
         self.workspace_cache = {}
         self.last_selected_item = None
         
+        # Supported source and markup extension registry map
+        self.supported_extensions = (
+            '.txt', '.py', '.json', '.html', '.css', '.js', 
+            '.java', '.cpp', '.c', '.h', '.sh', '.md', '.xml', '.yaml', '.yml'
+        )
+        
         self.init_ui()
         
     def init_ui(self):
@@ -49,40 +55,36 @@ class TextEditorApp:
         # --- Right Pane ---
         right_frame = ttk.Frame(paned_window, padding=5)
         
-        # Text editing frame containing ruler and text area side-by-side
         text_layout_frame = ttk.Frame(right_frame)
         text_layout_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Line count ruler (Canvas widget)
         self.line_ruler = tk.Canvas(text_layout_frame, width=45, bg="#f0f0f0", bd=0, highlightthickness=0)
         self.line_ruler.pack(side=tk.LEFT, fill=tk.Y)
         
-        # Text editing widget
-        self.text_edit = tk.Text(text_layout_frame, wrap=tk.WORD, undo=True)
+        self.text_edit = tk.Text(text_layout_frame, wrap=tk.NONE, undo=True)
         self.text_edit.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.text_edit.tag_configure("match", background="yellow", foreground="black")
         
-        # Scrollbar linked to text component
+        x_scrollbar = ttk.Scrollbar(right_frame, orient=tk.HORIZONTAL, command=self.text_edit.xview)
+        x_scrollbar.pack(fill=tk.X)
+        self.text_edit.config(xscrollcommand=x_scrollbar.set)
+        
         text_scrollbar = ttk.Scrollbar(text_layout_frame, orient=tk.VERTICAL, command=self.text_edit.yview)
         text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.text_edit.config(yscrollcommand=text_scrollbar.set)
         
-        # Triggers to update the line count ruler dynamically
         self.text_edit.bind('<KeyRelease>', self.update_line_ruler)
         self.text_edit.bind('<ButtonRelease-1>', self.update_line_ruler)
         self.text_edit.bind('<MouseWheel>', self.update_line_ruler)
         self.text_edit.bind('<Configure>', self.update_line_ruler)
-        # For Linux scroll events
         self.text_edit.bind('<Button-4>', self.update_line_ruler)
         self.text_edit.bind('<Button-5>', self.update_line_ruler)
         
-        # Custom scroll command proxy to capture scrollbar drag movements
         def on_scroll(*args):
             text_scrollbar.set(*args)
             self.update_line_ruler()
         self.text_edit.config(yscrollcommand=on_scroll)
         
-        # Control row container for workflow action shortcuts
         button_row = ttk.Frame(right_frame)
         button_row.pack(fill=tk.X, pady=(5, 0))
         button_row.columnconfigure((0, 1, 2, 3, 4), weight=1)
@@ -105,14 +107,10 @@ class TextEditorApp:
         paned_window.add(left_frame, weight=1)
         paned_window.add(right_frame, weight=3)
         
-        # Initialize ruler on startup
         self.update_line_ruler()
         
     def update_line_ruler(self, event=None):
-        '''Redraws the numerical line indicators inside the canvas ruler panel alignment.'''
         self.line_ruler.delete("all")
-        
-        # Iterate over text rows visually present in the viewport
         i = self.text_edit.index("@0,0")
         while True:
             dline = self.text_edit.dlineinfo(i)
@@ -120,15 +118,11 @@ class TextEditorApp:
                 break
             y = dline[1]
             line_num = i.split(".")[0]
-            # Draw line number slightly offset from the right boundary edge
             self.line_ruler.create_text(38, y, anchor="ne", text=line_num, fill="#666666", font=("Courier", 10))
             i = self.text_edit.index(f"{i}+1line")
             
     def goto_line(self):
-        '''Prompts user to navigate directly to a target line row index row line.'''
-        # Calculate maximum current rows
         total_lines = int(self.text_edit.index('end-1c').split('.')[0])
-        
         line_num = simpledialog.askinteger(
             "Goto Line", 
             f"Enter line number (1-{total_lines}):", 
@@ -136,9 +130,7 @@ class TextEditorApp:
             minvalue=1, 
             maxvalue=total_lines
         )
-        
         if line_num:
-            # Set cursor focus to target index point position
             self.text_edit.mark_set(tk.INSERT, f"{line_num}.0")
             self.text_edit.see(f"{line_num}.0")
             self.text_edit.focus_set()
@@ -161,14 +153,14 @@ class TextEditorApp:
                 files_only = [
                     f for f in all_items 
                     if os.path.isfile(os.path.join(self.current_directory, f)) 
-                    and f.lower().endswith('.txt')
+                    and f.lower().endswith(self.supported_extensions)
                 ]
                 for file in sorted(files_only):
                     self.file_list.insert(tk.END, f"{file}  ❌")
             for unt in temp_untitleds:
                 self.file_list.insert(tk.END, unt)
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to load directory files:\n{str(e)}")
+            messagebox.showerror("Error", "Failed to load directory files:\n" + str(e))
             
     def save_current_to_cache(self):
         if self.last_selected_item:
@@ -181,7 +173,6 @@ class TextEditorApp:
             return
             
         display_name = self.file_list.get(selection)
-        
         self.save_current_to_cache()
         self.last_selected_item = display_name
         self.text_edit.tag_remove("match", "1.0", tk.END)
@@ -211,9 +202,9 @@ class TextEditorApp:
                 self.text_edit.delete("1.0", tk.END)
                 self.text_edit.insert("1.0", content)
             else:
-                messagebox.showerror("Error", f"File path does not exist:\n{self.current_file_path}")
+                messagebox.showerror("Error", "File path does not exist:\n" + str(self.current_file_path))
         except Exception as e:
-            messagebox.showerror("Error", f"Could not read file:\n{str(e)}")
+            messagebox.showerror("Error", "Could not read file:\n" + str(e))
         finally:
             self.root.after(10, self.update_line_ruler)
             
@@ -227,7 +218,6 @@ class TextEditorApp:
             return
             
         x_start, y_start, width, height = bbox
-        
         if event.x > (x_start + width - 30):
             display_name = self.file_list.get(index)
             filename = display_name.removesuffix("  ❌")
@@ -249,7 +239,6 @@ class TextEditorApp:
             
     def new_file(self):
         self.save_current_to_cache()
-        
         self.current_file_path = ""
         self.text_edit.tag_remove("match", "1.0", tk.END)
         self.text_edit.delete("1.0", tk.END)
@@ -273,8 +262,16 @@ class TextEditorApp:
             file_path = filedialog.asksaveasfilename(
                 initialdir=self.current_directory if self.current_directory else os.path.expanduser("~"),
                 title="Save File As",
-                defaultextension=".txt",
-                filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
+                defaultextension=".py",
+                filetypes=[
+                    ("Python Files", "*.py"),
+                    ("Text Files", "*.txt"),
+                    ("JavaScript Files", "*.js"),
+                    ("HTML Files", "*.html"),
+                    ("CSS Files", "*.css"),
+                    ("JSON Files", "*.json"),
+                    ("All Files", "*.*")
+                ]
             )
             if file_path:
                 self.current_file_path = file_path
@@ -307,7 +304,7 @@ class TextEditorApp:
                 self.file_list.selection_set(idx)
                 self.last_selected_item = saved_display_name
         except Exception as e:
-            messagebox.showerror("Error", f"Could not save file:\n{str(e)}")
+            messagebox.showerror("Error", "Could not save file:\n" + str(e))
         finally:
             self.update_line_ruler()
             
@@ -318,6 +315,7 @@ class TextEditorApp:
         find_dialog.resizable(False, False)
         find_dialog.transient(self.root)
         find_dialog.columnconfigure(1, weight=1)
+        
         lbl_find = ttk.Label(find_dialog, text="Find text:")
         lbl_find.grid(row=0, column=0, padx=10, pady=(15, 5), sticky="w")
         entry_find = ttk.Entry(find_dialog, width=30)
@@ -334,7 +332,6 @@ class TextEditorApp:
             search_query = entry_find.get()
             if not search_query:
                 return 0
-                
             start_pos = "1.0"
             count = 0
             while True:
@@ -354,12 +351,10 @@ class TextEditorApp:
             replace_query = entry_replace.get()
             if not search_query:
                 return
-                
             start_pos = self.text_edit.index(tk.INSERT)
             pos = self.text_edit.search(search_query, start_pos, stopindex=tk.END)
             if not pos:
                 pos = self.text_edit.search(search_query, "1.0", stopindex=tk.END)
-                
             if pos:
                 end_pos = f"{pos}+{len(search_query)}c"
                 self.text_edit.delete(pos, end_pos)
@@ -376,11 +371,9 @@ class TextEditorApp:
             replace_query = entry_replace.get()
             if not search_query:
                 return
-                
             start_pos = "1.0"
             count = 0
             self.text_edit.config(autoseparators=False)
-            
             while True:
                 pos = self.text_edit.search(search_query, start_pos, stopindex=tk.END)
                 if not pos:
@@ -390,10 +383,8 @@ class TextEditorApp:
                 self.text_edit.insert(pos, replace_query)
                 start_pos = f"{pos}+{len(replace_query)}c"
                 count += 1
-                
             self.text_edit.config(autoseparators=True)
             self.text_edit.tag_remove("match", "1.0", tk.END)
-            
             if count > 0:
                 messagebox.showinfo("Replace All", f"Successfully replaced {count} occurrence(s).", parent=find_dialog)
             else:
