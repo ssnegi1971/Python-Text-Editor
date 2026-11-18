@@ -14,7 +14,9 @@ Features
       every file in the folder
     * "x" on a row removes that file from the left pane (never from the disk);
       if it is the file you have open, it is closed first (with a save prompt)
-    * New File: create a file in the scanned folder, listed and opened
+    * New File: adds an unsaved buffer to the pane and opens it; nothing is
+      written to disk until you save, so closing it with "Don't save" leaves
+      no file behind
     * Open File: open any file (files outside the folder join the list too)
     * Save / Save As, with an "unsaved changes" guard
     * Close file, Go to line, Find & replace (case / whole word / regex)
@@ -166,21 +168,22 @@ def display_label(path: str, folder: str | None) -> str:
 
 
 def merge_entries(scanned: list[str], external: list[str],
-                  folder: str | None) -> list[str]:
+                  folder: str | None, keep=()) -> list[str]:
     """Combine scan results with files opened from elsewhere.
 
     Duplicates are dropped, missing files are skipped, and entries inside the
     folder are listed before outside ones.
     """
+    keep_norm = {os.path.normcase(os.path.abspath(p)) for p in keep}
     result: list[str] = []
     seen: set[str] = set()
-    for path in list(scanned) + list(external):
+    for path in list(scanned) + list(external) + list(keep):
         if not path:
             continue
         norm = os.path.normcase(os.path.abspath(path))
         if norm in seen:
             continue
-        if not os.path.isfile(path):
+        if not os.path.isfile(path) and norm not in keep_norm:
             continue
         seen.add(norm)
         result.append(os.path.abspath(path))
@@ -436,6 +439,7 @@ class TxtStudio(tk.Tk):
         self.dirty = False
         self.entries: list[str] = []      # absolute paths shown in the left pane
         self.external: list[str] = []     # files opened from outside the folder
+        self.pending_new: set[str] = set()  # new files not yet written to disk
         self._iid_path: dict[str, str] = {}
         self._find_dialog: FindReplaceDialog | None = None
 
@@ -692,7 +696,8 @@ class TxtStudio(tk.Tk):
         scanned = [os.path.join(self.folder, rel)
                    for rel in scan_files(self.folder, self.recursive_var.get(),
                                          **self.filter_spec())]
-        self.entries = merge_entries(scanned, self.external, self.folder)
+        self.entries = merge_entries(scanned, self.external, self.folder,
+                                     keep=sorted(self.pending_new))
         self.external = [p for p in self.external if os.path.isfile(p)]
         self.refresh_list()
 
@@ -706,8 +711,10 @@ class TxtStudio(tk.Tk):
         self.tree.delete(*self.tree.get_children())
         self._iid_path.clear()
         for path in self.entries:
-            iid = self.tree.insert(
-                "", "end", values=(display_label(path, self.folder), CLOSE_GLYPH))
+            label = display_label(path, self.folder)
+            if path in self.pending_new:
+                label += "   (unsaved)"
+            iid = self.tree.insert("", "end", values=(label, CLOSE_GLYPH))
             self._iid_path[iid] = path
         self.retag_rows()
         scope = "including subfolders" if self.recursive_var.get() else "top level only"
@@ -789,16 +796,23 @@ class TxtStudio(tk.Tk):
         """Drop a file from the left pane. The file on disk is never touched."""
         if not path:
             return
+        was_pending = path in self.pending_new
         if path == self.current_path:
             if not self.confirm_discard():
                 return
             self.unload_editor()
+        self.pending_new.discard(path)
         self.entries = [p for p in self.entries if p != path]
         self.external = [p for p in self.external if p != path]
         self.refresh_list()
-        self.flash_status(
-            f"Removed {os.path.basename(path)} from the list "
-            f"\u2014 the file on disk is untouched. Press F5 to bring it back.")
+        name = os.path.basename(path)
+        if was_pending:
+            self.flash_status(
+                f"Discarded the unsaved file {name} \u2014 nothing was written to disk.")
+        else:
+            self.flash_status(
+                f"Removed {name} from the list \u2014 the file on disk is untouched. "
+                f"Press F5 to bring it back.")
 
     # -- new / open files -------------------------------------------------- #
     def new_file(self) -> None:
@@ -825,24 +839,21 @@ class TxtStudio(tk.Tk):
             return
 
         path = os.path.join(self.folder, name)
-        try:
-            with open(path, "x", encoding="utf-8", newline=""):
-                pass
-        except FileExistsError:
+        if os.path.exists(path) or path in self.pending_new:
             messagebox.showerror(
                 "Already exists",
                 f"\u201c{name}\u201d already exists in this folder.\n"
                 "Pick another name, or double-click the existing file to open it.",
                 parent=self)
             return
-        except OSError as exc:
-            messagebox.showerror("Cannot create file", f"{path}\n\n{exc}", parent=self)
-            return
 
+        # Nothing is written to disk here: the buffer stays unsaved until the
+        # user saves it, so "Don't save" on close leaves no file behind.
+        self.pending_new.add(path)
         self.rescan()
         self.open_file(path)
         self.select_current_in_list()
-        self.flash_status(f"Created {name}")
+        self.flash_status(f"New file {name} \u2014 not on disk until you save it.")
 
     def open_any_file(self) -> None:
         path = filedialog.askopenfilename(
@@ -871,11 +882,14 @@ class TxtStudio(tk.Tk):
             return
         if not self.confirm_discard():
             return
-        try:
-            text, encoding, newline = read_text_file(path)
-        except OSError as exc:
-            messagebox.showerror("Cannot open file", f"{path}\n\n{exc}", parent=self)
-            return
+        if path in self.pending_new and not os.path.exists(path):
+            text, encoding, newline = "", "utf-8", "\n"
+        else:
+            try:
+                text, encoding, newline = read_text_file(path)
+            except OSError as exc:
+                messagebox.showerror("Cannot open file", f"{path}\n\n{exc}", parent=self)
+                return
 
         self.set_editor_enabled(True)
         self.text.delete("1.0", "end")
@@ -911,6 +925,10 @@ class TxtStudio(tk.Tk):
             return False
         self.text.edit_modified(False)
         self.dirty = False
+        if self.current_path in self.pending_new:
+            self.pending_new.discard(self.current_path)
+            self.rescan()
+            self.select_current_in_list()
         self.update_title()
         self.update_status()
         self.flash_status(f"Saved {os.path.basename(self.current_path)}")
@@ -935,7 +953,9 @@ class TxtStudio(tk.Tk):
         except OSError as exc:
             messagebox.showerror("Cannot save file", f"{path}\n\n{exc}", parent=self)
             return False
+        self.pending_new.discard(self.current_path)
         self.current_path = os.path.abspath(path)
+        self.pending_new.discard(self.current_path)
         self.text.edit_modified(False)
         self.dirty = False
         self.update_title()
@@ -947,6 +967,9 @@ class TxtStudio(tk.Tk):
     def close_file(self) -> None:
         """Unload the open file, leaving its row in the left pane."""
         if not self.current_path:
+            return
+        if self.current_path in self.pending_new:
+            self.close_entry(self.current_path)   # nothing on disk to keep
             return
         if not self.confirm_discard():
             return
@@ -970,13 +993,18 @@ class TxtStudio(tk.Tk):
 
     def confirm_discard(self) -> bool:
         """True if it is OK to drop the buffer (saving first if asked)."""
-        if not self.dirty or not self.current_path:
+        if not self.current_path:
             return True
-        answer = messagebox.askyesnocancel(
-            "Unsaved changes",
-            f"Save changes to \u201c{os.path.basename(self.current_path)}\u201d first?",
-            parent=self,
-        )
+        pending = self.current_path in self.pending_new
+        if not self.dirty and not pending:
+            return True
+        name = os.path.basename(self.current_path)
+        if pending:
+            question = (f"\u201c{name}\u201d has not been saved yet.\n\n"
+                        "Save it before closing?")
+        else:
+            question = f"Save changes to \u201c{name}\u201d first?"
+        answer = messagebox.askyesnocancel("Unsaved changes", question, parent=self)
         if answer is None:      # cancel
             return False
         if answer:              # yes -> save, and only proceed if it worked
@@ -1229,7 +1257,8 @@ class TxtStudio(tk.Tk):
             "About",
             f"{APP_NAME}\n\nA tiny text and code browser and editor built with tkinter.\n"
             "Pick a folder, double-click a file, edit, then Save / Close.\n"
-            "The \u00d7 on a row removes it from the list \u2014 never from the disk.",
+            "The \u00d7 on a row removes it from the list \u2014 never from the disk.\n"
+            "A new file stays unsaved until you save it.",
             parent=self,
         )
 
