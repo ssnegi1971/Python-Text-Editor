@@ -31,14 +31,15 @@ CODE_EXTENSIONS = TEXT_EXTENSIONS + (
     ".sh", ".bash", ".zsh", ".fish", ".bat", ".cmd", ".ps1",
 )
 
-#steps to create EXE for one-click use of app
-place pythonTextEditor.py in a folder (example:C:\Users\Admin\Desktop\work\Python\PythonApps\)
-along with txt_studio.ico.
+place PythonPhotoAlbum.py in a folder (example:C:\Users\Admin\Desktop\work\Python\PythonApps)
+
+along with txt_studio.ico and build_text_exe.bat.
+
 #Goto command prompt
 
 pip install pyinstaller
 
-pyinstaller --noconsole --onefile --icon C:\Users\Admin\Desktop\work\Python\PythonApps\txt_studio.ico C:\Users\Admin\Desktop\work\Python\PythonApps\pythonTextEditor.py
+double click build_text_exe.bat
 
-It will create EXE in folder C:\Users\Admin\dist by default. Copy EXE to desired location.
+It will create EXE in folder C:...\dist by default. Copy EXE to desired location.
 
